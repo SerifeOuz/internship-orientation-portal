@@ -1,4 +1,4 @@
-<title>PIXAGE ONBOARD</title>
+﻿<title>PIXAGE ONBOARD</title>
 <style>
   html, body, #root { height: 100%; margin: 0; }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f8fafc; }
@@ -317,6 +317,23 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
 </script>
 <script>window.react = window.React;</script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script>
+  // >>> AŞAĞIDAKİ 6 DEĞERİ FIREBASE KONSOLUNDAN ALDIĞIN BİLGİLERLE DEĞİŞTİR <<<
+  const firebaseConfig = {
+    apiKey: "AIzaSyCcgb8yUyAqqjhm71SniSZwkRxmavmncnc",
+    authDomain: "internship-orientation-portal.firebaseapp.com",
+    projectId: "internship-orientation-portal",
+    storageBucket: "internship-orientation-portal.firebasestorage.app",
+    messagingSenderId: "178869393953",
+    appId: "1:178869393953:web:fa11f51f957a0e0b5a6160"
+  };
+  firebase.initializeApp(firebaseConfig);
+  window.fbAuth = firebase.auth();
+  window.fbDb = firebase.firestore();
+</script>
 <script>
 /**
  * @license lucide-react v0.441.0 - ISC
@@ -21285,15 +21302,15 @@ ArrowRight, ArrowLeft, GraduationCap, Briefcase, ShieldCheck, Clock, FileText, R
 Sparkles, ExternalLink, UserPlus, ClipboardList, Play, Video, Info, LayoutTemplate, LogOut } = LucideReact;
 </script>
 <script>
-/* ================================================================== *
- *  PIXAGE ONBOARD — Guided Onboarding Assistant (çalışan MVP)
- *  - Ana deneyim: konuşma tabanlı, adım adım yönlendiren assistant.
- *  - Stage -> Activity (read_confirm | video | video_series | quiz |
- *    task | external | information). Her aşamada test ZORUNLU DEĞİL.
- *  - Rol atanır (seçilmez); departman/rol template'i otomatik gelir.
- *  - Access: Open / Open Demo / Request + License Pending, gerçek state.
- *  - Mentor ayrı rol; onboarding'den geçmez. Meetings yok.
- *  - Teams Personal App mimarisine hazır tek dosya.
+/* ================================================================== *
+ *  PIXAGE ONBOARD — Guided Onboarding Assistant (çalışan MVP)
+ *  - Ana deneyim: konuşma tabanlı, adım adım yönlendiren assistant.
+ *  - Stage -> Activity (read_confirm | video | video_series | quiz |
+ *    task | external | information). Her aşamada test ZORUNLU DEĞİL.
+ *  - Rol atanır (seçilmez); departman/rol template'i otomatik gelir.
+ *  - Access: Open / Open Demo / Request + License Pending, gerçek state.
+ *  - Mentor ayrı rol; onboarding'den geçmez. Meetings yok.
+ *  - Teams Personal App mimarisine hazır tek dosya.
  * ================================================================== */
 
 const ROLES = {
@@ -21333,31 +21350,9 @@ const ACT_LABEL = {
   task: "Görev",
   external: "Dış Sistem"
 };
-const DEFAULT_USERS = [{
-  id: "u_ayse",
-  name: "Ayşe Yılmaz",
-  role: "stajyer",
-  email: "ayse.yilmaz@stajyer.mog",
-  password: "stajyer123"
-}, {
-  id: "u_mehmet",
-  name: "Mehmet Kaya",
-  role: "proje_asistani",
-  email: "mehmet.kaya@asistan.mog",
-  password: "asistan123"
-}, {
-  id: "u_zeynep",
-  name: "Zeynep Demir",
-  role: "tam_zamanli",
-  email: "zeynep.demir@calisan.mog",
-  password: "calisan123"
-}, {
-  id: "u_elif",
-  name: "Elif Mentor",
-  role: "mentor",
-  email: "elif.mentor@mentor.mog",
-  password: "mentor123"
-}];
+// Kullanıcılar artık Firebase üzerinden gerçek hesap açarak (giriş ekranındaki
+// "Hesap oluştur") sisteme katılır. İlk hesabı açan kişi otomatik "mentor" olur;
+// sonraki herkese mentor Users ekranından rol atar.
 
 /* ---------------- Stages (Sales department, role templates) ---------------- */
 const DEFAULT_STAGES = [{
@@ -21850,117 +21845,19 @@ const ACCESS_ICONS = {
   default: KeyRound
 };
 
-/* ---------------- storage ---------------- */
-const K = {
-  content: "pixage_content_v3",
-  users: "pixage_users_v3",
-  progress: "pixage_progress_v3",
-  session: "pixage_session_v3"
-};
-
-// IndexedDB tabanlı basit key-value depo. localStorage'ın aksine (~5-10MB, string-only)
-// IndexedDB çok daha büyük kotaya sahiptir ve objeleri doğrudan (base64 dosya ekleri dahil)
-// saklayabilir — yüklenen belgelerin/görsellerin kalıcı kalması için bu gereklidir.
-const IDB_NAME = "pixage_onboard_db",
-  IDB_STORE = "kv";
-let _idbPromise = null;
-function openIDB() {
-  if (_idbPromise) return _idbPromise;
-  _idbPromise = new Promise((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      reject(new Error("no-indexeddb"));
-      return;
-    }
-    // Bazı ortamlarda (kısıtlı/headless tarayıcı, gizli sekme vb.) indexedDB.open hiç
-    // yanıt vermeyebilir — bu, uygulamayı sonsuza dek "Yükleniyor…" ekranında bırakır.
-    // 3sn'lik zaman aşımıyla bu durumda localStorage'a düşüyoruz.
-    const timer = setTimeout(() => reject(new Error("idb-timeout")), 3000);
-    try {
-      const req = indexedDB.open(IDB_NAME, 1);
-      req.onupgradeneeded = () => {
-        if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
-      };
-      req.onsuccess = () => {
-        clearTimeout(timer);
-        resolve(req.result);
-      };
-      req.onerror = () => {
-        clearTimeout(timer);
-        reject(req.error);
-      };
-    } catch (e) {
-      clearTimeout(timer);
-      reject(e);
-    }
-  });
-  _idbPromise.catch(() => {
-    _idbPromise = null;
-  });
-  return _idbPromise;
-}
-const store = {
-  // Teams Personal App'te window.storage kullanılır; düz tarayıcıda (bu önizleme dahil)
-  // IndexedDB'ye düşerek içerik/erişim/kullanıcı değişikliklerinin kalıcı kalmasını sağlar.
-  async get(key, fb) {
-    try {
-      if (typeof window !== "undefined" && window.storage) {
-        const r = await window.storage.get(key);
-        return r && r.value ? JSON.parse(r.value) : fb;
-      }
-      const db = await openIDB();
-      return await new Promise(resolve => {
-        const req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(key);
-        req.onsuccess = () => resolve(req.result !== undefined ? req.result : fb);
-        req.onerror = () => resolve(fb);
-      });
-    } catch (e) {
-      try {
-        if (typeof window !== "undefined" && window.localStorage) {
-          const raw = window.localStorage.getItem(key);
-          return raw ? JSON.parse(raw) : fb;
-        }
-      } catch (e2) {}
-      return fb;
-    }
-  },
-  // true/false döner: yazma gerçekten başarılı oldu mu? Sessizce yutmuyoruz —
-  // çağıran taraf başarısızlığı kullanıcıya bildirebilsin.
-  async set(key, val) {
-    try {
-      if (typeof window !== "undefined" && window.storage) {
-        await window.storage.set(key, JSON.stringify(val));
-        return true;
-      }
-      const db = await openIDB();
-      return await new Promise(resolve => {
-        const tx = db.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).put(val, key);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => resolve(false);
-        tx.onabort = () => resolve(false);
-      });
-    } catch (e) {
-      try {
-        if (typeof window !== "undefined" && window.localStorage) {
-          window.localStorage.setItem(key, JSON.stringify(val));
-          return true;
-        }
-      } catch (e2) {}
-      return false;
-    }
-  }
+/* ---------------- storage (Firebase Firestore — paylaşımlı/ortak) ---------------- */
+// Tüm içerik/kullanıcı/ilerleme verisi artık tek bir tarayıcıya değil, ortak bir
+// Firestore veritabanına yazılır. Bu linki açan ve giriş yapan herkes aynı veriyi görür.
+const DOCS = {
+  content: () => window.fbDb.collection("appdata").doc("content"),
+  users: () => window.fbDb.collection("appdata").doc("users"),
+  progress: () => window.fbDb.collection("appdata").doc("progress")
 };
 const emptyProgress = () => ({
   completed: {},
   activities: {},
   access: {},
   started: false
-});
-const seedProgress = () => ({
-  u_ayse: emptyProgress(),
-  u_mehmet: emptyProgress(),
-  u_zeynep: emptyProgress(),
-  u_elif: emptyProgress()
 });
 
 /* ---------------- completion helpers ---------------- */
@@ -21977,16 +21874,17 @@ function stageDone(stage, prog) {
 
 /* ================================================================== */
 function App() {
+  const [authUser, setAuthUser] = useState(undefined); // undefined=yükleniyor, null=çıkış yapılmış
+  const [authMode, setAuthMode] = useState("login"); // login | signup
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const [content, setContent] = useState({
     stages: DEFAULT_STAGES,
     access: DEFAULT_ACCESS
   });
-  const [users, setUsers] = useState(DEFAULT_USERS);
-  const [progress, setProgress] = useState(seedProgress());
-  const [session, setSession] = useState({
-    currentUserId: null
-  });
-  const [loaded, setLoaded] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [progress, setProgress] = useState({});
+  const [dataReady, setDataReady] = useState(false);
   const [view, setView] = useState("onboarding");
   const [chat, setChat] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -21999,53 +21897,154 @@ function App() {
   const [addContent, setAddContent] = useState(null);
   const [toast, setToast] = useState(null);
   const scrollRef = useRef(null);
-  useEffect(() => {
-    (async () => {
-      const c = await store.get(K.content, null);
-      if (c && c.stages) setContent(c);
-      const u = await store.get(K.users, null);
-      if (u) setUsers(u);
-      const p = await store.get(K.progress, null);
-      if (p) setProgress(p);
-      const s = await store.get(K.session, null);
-      if (s) setSession(s);
-      setLoaded(true);
-    })();
-  }, []);
-  useEffect(() => {
-    if (loaded) store.set(K.content, content).then(ok => {
-      if (!ok) notify("⚠️ İçerik kaydedilemedi — tarayıcı depolamasına erişilemedi.");
-    });
-  }, [content, loaded]);
-  useEffect(() => {
-    if (loaded) store.set(K.users, users).then(ok => {
-      if (!ok) notify("⚠️ Kullanıcılar kaydedilemedi.");
-    });
-  }, [users, loaded]);
-  useEffect(() => {
-    if (loaded) store.set(K.progress, progress).then(ok => {
-      if (!ok) notify("⚠️ İlerleme kaydedilemedi.");
-    });
-  }, [progress, loaded]);
-  useEffect(() => {
-    if (loaded) store.set(K.session, session).then(ok => {
-      if (!ok) notify("⚠️ Oturum kaydedilemedi.");
-    });
-  }, [session, loaded]);
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [chat, justCompleted]);
   const notify = m => {
     setToast(m);
     setTimeout(() => setToast(null), 2600);
   };
-  const currentUser = users.find(u => u.id === session.currentUserId) || null;
+  // Firebase Auth oturum durumunu izle (tarayıcıya özel, otomatik kalıcı).
+  useEffect(() => {
+    const unsub = window.fbAuth.onAuthStateChanged(u => setAuthUser(u || null));
+    return () => unsub();
+  }, []);
+  // Giriş yapıldıktan sonra ortak veriyi (content/users/progress) Firestore'dan canlı dinle —
+  // herkes aynı veriyi görür; bir kişi değişiklik yaptığında diğerlerinde de anında güncellenir.
+  useEffect(() => {
+    if (!authUser) {
+      setDataReady(false);
+      return;
+    }
+    let gotContent = false,
+      gotUsers = false,
+      gotProgress = false;
+    const check = () => {
+      if (gotContent && gotUsers && gotProgress) setDataReady(true);
+    };
+    const unsubC = DOCS.content().onSnapshot(async snap => {
+      if (snap.exists) setContent(snap.data().value);else await DOCS.content().set({
+        value: {
+          stages: DEFAULT_STAGES,
+          access: DEFAULT_ACCESS
+        }
+      });
+      gotContent = true;
+      check();
+    }, () => notify("⚠️ İçerik yüklenemedi."));
+    const unsubU = DOCS.users().onSnapshot(async snap => {
+      if (snap.exists) setUsers(snap.data().value);else await DOCS.users().set({
+        value: []
+      });
+      gotUsers = true;
+      check();
+    }, () => notify("⚠️ Kullanıcılar yüklenemedi."));
+    const unsubP = DOCS.progress().onSnapshot(async snap => {
+      if (snap.exists) setProgress(snap.data().value);else await DOCS.progress().set({
+        value: {}
+      });
+      gotProgress = true;
+      check();
+    }, () => notify("⚠️ İlerleme yüklenemedi."));
+    return () => {
+      unsubC();
+      unsubU();
+      unsubP();
+    };
+  }, [authUser]);
+  // Firebase hesabı var ama henüz bir profil kaydı yoksa (yeni "Hesap oluştur" veya
+  // Firebase konsolundan elle eklenmiş hesap) otomatik bir profil oluştur. İlk hesap
+  // doğrudan mentor olur; sonrakiler mentor rol atayana kadar "beklemede" kalır.
+  useEffect(() => {
+    if (!authUser || !dataReady) return;
+    const exists = users.some(u => u.uid === authUser.uid);
+    if (!exists) {
+      const isFirst = users.length === 0;
+      const profile = {
+        id: authUser.uid,
+        uid: authUser.uid,
+        name: authUser.displayName || (authUser.email ? authUser.email.split("@")[0] : "Kullanıcı"),
+        email: authUser.email || "",
+        role: isFirst ? "mentor" : null
+      };
+      const next = [...users, profile];
+      setUsers(next);
+      DOCS.users().set({
+        value: next
+      }).catch(() => {});
+    }
+  }, [authUser, dataReady, users]);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [chat, justCompleted]);
+  const writeContent = next => {
+    setContent(next);
+    DOCS.content().set({
+      value: next
+    }).catch(() => notify("⚠️ Kaydedilemedi."));
+  };
+  const writeUsers = next => {
+    setUsers(next);
+    DOCS.users().set({
+      value: next
+    }).catch(() => notify("⚠️ Kaydedilemedi."));
+  };
+  const writeProgressFull = next => {
+    setProgress(next);
+    DOCS.progress().set({
+      value: next
+    }).catch(() => notify("⚠️ Kaydedilemedi."));
+  };
+  const handleAuthSubmit = async ({
+    mode,
+    name,
+    email,
+    password
+  }) => {
+    setAuthError("");
+    if (!email.trim() || !password.trim() || mode === "signup" && !name.trim()) {
+      setAuthError("Lütfen tüm alanları doldur.");
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      if (mode === "signup") {
+        const cred = await window.fbAuth.createUserWithEmailAndPassword(email.trim(), password);
+        await cred.user.updateProfile({
+          displayName: name.trim()
+        });
+      } else {
+        await window.fbAuth.signInWithEmailAndPassword(email.trim(), password);
+      }
+    } catch (e) {
+      const map = {
+        "auth/invalid-email": "Geçersiz e-posta.",
+        "auth/user-not-found": "Bu e-posta ile kayıtlı hesap yok.",
+        "auth/wrong-password": "Şifre hatalı.",
+        "auth/invalid-credential": "E-posta veya şifre hatalı.",
+        "auth/email-already-in-use": "Bu e-posta zaten kayıtlı.",
+        "auth/weak-password": "Şifre en az 6 karakter olmalı."
+      };
+      setAuthError(map[e.code] || "Bir hata oluştu: " + e.message);
+    }
+    setAuthBusy(false);
+  };
+  const currentUser = authUser ? users.find(u => u.uid === authUser.uid) || null : null;
   const isMentor = currentUser && currentUser.role === "mentor";
+  const pendingRole = !!currentUser && !currentUser.role;
   const myProg = currentUser && progress[currentUser.id] || emptyProgress();
-  const patchProg = (uid, fn) => setProgress(all => ({
-    ...all,
-    [uid]: fn(all[uid] || emptyProgress())
-  }));
+  const patchProg = (uid, fn) => {
+    const nextSlice = fn(progress[uid] || emptyProgress());
+    const nextProgress = {
+      ...progress,
+      [uid]: nextSlice
+    };
+    setProgress(nextProgress);
+    DOCS.progress().set({
+      value: {
+        [uid]: nextSlice
+      }
+    }, {
+      merge: true
+    }).catch(() => notify("⚠️ Kaydedilemedi."));
+  };
   const stagesForRole = role => content.stages.filter(s => s.roles.includes(role)).sort((a, b) => a.order - b.order);
   // Stajyer: her aşama sırayla kilitli (önceki tamamlanmadan sonrakine geçilemez).
   // Tam zamanlı çalışan: hiçbir aşama kilitlenmez, hiçbir şart gösterilmez — tamamı serbestçe açılabilir.
@@ -22095,21 +22094,8 @@ function App() {
   };
 
   /* ---------- actions ---------- */
-  const login = uid => {
-    const u = users.find(x => x.id === uid);
-    setSession({
-      currentUserId: uid
-    });
-    setView(u && u.role === "mentor" ? "mentor" : "onboarding");
-    setChat([]);
-    setCardState({});
-    setJustCompleted(null);
-    setMentorSel(null);
-  };
   const logout = () => {
-    setSession({
-      currentUserId: null
-    });
+    window.fbAuth.signOut();
     setView("onboarding");
     setChat([]);
     setCardState({});
@@ -22165,13 +22151,13 @@ function App() {
     started: true
   }));
   const addContentToStage = (stageId, activity) => {
-    setContent(c => ({
-      ...c,
-      stages: c.stages.map(s => s.id === stageId ? {
+    writeContent({
+      ...content,
+      stages: content.stages.map(s => s.id === stageId ? {
         ...s,
         activities: [...s.activities, activity]
       } : s)
-    }));
+    });
     setAddContent(null);
     notify("İçerik eklendi.");
   };
@@ -22239,38 +22225,38 @@ function App() {
     notify(approved ? "BT erişimi onayladı." : "BT talebi reddetti.");
   };
 
-  // Bu ortamda tarayıcı depolaması içerik güncellendiğinde sıfırlanabiliyor — bu yüzden
-  // gerçek kalıcılık, mentorün düzenli aldığı bir yedek dosyası üzerinden sağlanıyor.
+  // Veri artık Firebase'de kalıcı olduğu için bu yedekleme zorunlu değil — sadece
+  // ekstra güvenlik amacıyla manuel dışa/içe aktarma imkânı sağlar.
   const importWorkspace = data => {
     if (!data || typeof data !== "object") {
       notify("⚠️ Geçersiz yedek dosyası.");
       return;
     }
-    if (data.content && data.content.stages) setContent(data.content);
-    if (data.users) setUsers(data.users);
-    if (data.progress) setProgress(data.progress);
+    if (data.content && data.content.stages) writeContent(data.content);
+    if (data.users) writeUsers(data.users);
+    if (data.progress) writeProgressFull(data.progress);
     notify("Yedek geri yüklendi.");
   };
   const saveStage = d => {
-    setContent(c => ({
-      ...c,
-      stages: c.stages.some(s => s.id === d.id) ? c.stages.map(s => s.id === d.id ? d : s) : [...c.stages, d]
-    }));
+    writeContent({
+      ...content,
+      stages: content.stages.some(s => s.id === d.id) ? content.stages.map(s => s.id === d.id ? d : s) : [...content.stages, d]
+    });
     setEditingStage(null);
     notify("Aşama kaydedildi.");
   };
   const deleteStage = id => {
-    setContent(c => ({
-      ...c,
-      stages: c.stages.filter(s => s.id !== id)
-    }));
+    writeContent({
+      ...content,
+      stages: content.stages.filter(s => s.id !== id)
+    });
     notify("Aşama silindi.");
   };
-  const moveStage = (id, dir) => setContent(c => {
-    const arr = [...c.stages].sort((a, b) => a.order - b.order);
+  const moveStage = (id, dir) => {
+    const arr = [...content.stages].sort((a, b) => a.order - b.order);
     const i = arr.findIndex(s => s.id === id);
     const j = i + dir;
-    if (j < 0 || j >= arr.length) return c;
+    if (j < 0 || j >= arr.length) return;
     const t = arr[i].order;
     arr[i] = {
       ...arr[i],
@@ -22280,39 +22266,26 @@ function App() {
       ...arr[j],
       order: t
     };
-    return {
-      ...c,
+    writeContent({
+      ...content,
       stages: arr
-    };
-  });
+    });
+  };
   const saveAccess = d => {
-    setContent(c => ({
-      ...c,
-      access: c.access.map(a => a.id === d.id ? d : a)
-    }));
+    writeContent({
+      ...content,
+      access: content.access.map(a => a.id === d.id ? d : a)
+    });
     setEditingAccess(null);
     notify("Access kaydedildi.");
   };
-  const addUser = (name, role) => {
-    const id = "u_" + Date.now();
-    setUsers(u => [...u, {
-      id,
-      name,
-      role
-    }]);
-    setProgress(p => ({
-      ...p,
-      [id]: emptyProgress()
-    }));
-    notify("Kullanıcı eklendi. Template otomatik atandı.");
-  };
-  const setUserRole = (id, role) => setUsers(u => u.map(x => x.id === id ? {
+  const setUserRole = (id, role) => writeUsers(users.map(x => x.id === id ? {
     ...x,
     role
   } : x));
   const removeUser = id => {
-    setUsers(u => u.filter(x => x.id !== id));
-    notify("Kullanıcı silindi.");
+    writeUsers(users.filter(x => x.id !== id));
+    notify("Kullanıcı listeden kaldırıldı. (Not: Firebase giriş hesabı bu işlemle silinmez.)");
   };
 
   /* ---------- assistant free-form Q&A ---------- */
@@ -22398,13 +22371,35 @@ function App() {
   const runAction = a => {
     if (a.kind === "nav") setView(a.to);else if (a.kind === "url") openUrl(a.url);
   };
-  if (!loaded) return /*#__PURE__*/React.createElement("div", {
+  if (authUser === undefined) return /*#__PURE__*/React.createElement("div", {
     className: "min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm"
   }, "Y\xFCkleniyor\u2026");
-  if (!currentUser) return /*#__PURE__*/React.createElement(Login, {
-    users: users,
-    onLogin: login
+  if (!authUser) return /*#__PURE__*/React.createElement(AuthScreen, {
+    mode: authMode,
+    setMode: setAuthMode,
+    onSubmit: handleAuthSubmit,
+    error: authError,
+    busy: authBusy
   });
+  if (!dataReady) return /*#__PURE__*/React.createElement("div", {
+    className: "min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm"
+  }, "Veriler y\xFCkleniyor\u2026");
+  if (!currentUser || !currentUser.role) return /*#__PURE__*/React.createElement("div", {
+    className: "min-h-screen flex items-center justify-center bg-slate-50 p-6"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "max-w-sm text-center"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4"
+  }, /*#__PURE__*/React.createElement(Clock, {
+    size: 22
+  })), /*#__PURE__*/React.createElement("h1", {
+    className: "text-lg font-semibold text-slate-900"
+  }, "Hesab\u0131n olu\u015fturuldu"), /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-slate-500 mt-2"
+  }, "Mentor\xFCn sana bir rol atayana kadar bekle. Rol\xFCn atand\u0131\u011f\u0131nda bu sayfa otomatik g\xFCncellenecek."), /*#__PURE__*/React.createElement("button", {
+    onClick: logout,
+    className: "mt-5 text-sm font-medium text-slate-500 border border-slate-200 px-4 py-2 rounded-lg hover:bg-slate-50"
+  }, "\xC7\u0131k\u0131\u015f Yap")));
   const USER_NAV = [{
     id: "onboarding",
     label: "Onboarding",
@@ -22600,7 +22595,6 @@ function App() {
     setView
   }), isMentor && safeView === "users" && /*#__PURE__*/React.createElement(UsersAdmin, {
     users,
-    addUser,
     setUserRole,
     removeUser
   }), isMentor && safeView === "requests" && /*#__PURE__*/React.createElement(AccessRequests, {
@@ -22742,9 +22736,17 @@ function FileAttach({
   accept
 }) {
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const MAX = 700 * 1024; // ~700KB — paylaşımlı veritabanı dokümanının (1MB) altında güvenle kalmak için
   const pick = e => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX) {
+      setErr("Bu dosya çok büyük (" + (file.size / 1024 / 1024).toFixed(1) + " MB). En fazla ~0.7 MB'lık dosyalar güvenle desteklenir.");
+      e.target.value = "";
+      return;
+    }
+    setErr("");
     setBusy(true);
     const reader = new FileReader();
     reader.onload = () => {
@@ -22759,7 +22761,7 @@ function FileAttach({
     reader.onerror = () => setBusy(false);
     reader.readAsDataURL(file);
   };
-  return /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-2 text-xs"
   }, /*#__PURE__*/React.createElement("label", {
     className: "cursor-pointer text-blue-600 font-medium flex items-center gap-1 border border-slate-200 rounded-lg px-2.5 py-1.5 hover:bg-slate-50"
@@ -22778,28 +22780,30 @@ function FileAttach({
     className: "text-slate-400 hover:text-red-600"
   }, /*#__PURE__*/React.createElement(X, {
     size: 14
-  })));
+  }))), err && /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] text-red-600 mt-1"
+  }, err));
 }
 
-/* ============================ Login ============================ */
-function Login({
-  users,
-  onLogin
+/* ============================ Auth (Firebase) ============================ */
+function AuthScreen({
+  mode,
+  setMode,
+  onSubmit,
+  error,
+  busy
 }) {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [showDemo, setShowDemo] = useState(false);
   const submit = e => {
     e.preventDefault();
-    const norm = email.trim().toLowerCase();
-    const u = users.find(x => x.email && x.email.toLowerCase() === norm);
-    if (!u || u.password !== password) {
-      setError("E-posta veya şifre hatalı.");
-      return;
-    }
-    setError("");
-    onLogin(u.id);
+    onSubmit({
+      mode,
+      name,
+      email,
+      password
+    });
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "min-h-screen bg-slate-50 flex items-center justify-center p-6",
@@ -22820,28 +22824,35 @@ function Login({
     className: "bg-white border border-slate-200 rounded-2xl p-6 shadow-sm"
   }, /*#__PURE__*/React.createElement("h1", {
     className: "text-base font-semibold text-slate-900"
-  }, "Hesab\u0131nla giri\u015F yap"), /*#__PURE__*/React.createElement("p", {
+  }, mode === "login" ? "Hesab\u0131nla giri\u015F yap" : "Hesap olu\u015Ftur"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500 mt-1 mb-4"
-  }, "Rol\xFCn \u015Firket e-postana atanm\u0131\u015Ft\u0131r \u2014 kendin se\xE7mezsin."), /*#__PURE__*/React.createElement("form", {
+  }, mode === "login" ? "Bu sayfa \u015Fifreyle korunmaktad\u0131r." : "Hesap olu\u015Fturduktan sonra mentor\xFCn sana bir rol atayacak."), /*#__PURE__*/React.createElement("form", {
     onSubmit: submit,
     className: "grid gap-3"
-  }, /*#__PURE__*/React.createElement(Field, {
-    label: "Kurumsal e-posta"
+  }, mode === "signup" && /*#__PURE__*/React.createElement(Field, {
+    label: "Ad soyad"
+  }, /*#__PURE__*/React.createElement("input", {
+    value: name,
+    onChange: e => setName(e.target.value),
+    placeholder: "Ad Soyad",
+    className: inputCls
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "E-posta"
   }, /*#__PURE__*/React.createElement("input", {
     type: "email",
     autoComplete: "username",
     value: email,
     onChange: e => setEmail(e.target.value),
-    placeholder: "ad.soyad@sirket.mog",
+    placeholder: "ad.soyad@sirket.com",
     className: inputCls
   })), /*#__PURE__*/React.createElement(Field, {
     label: "\u015Eifre"
   }, /*#__PURE__*/React.createElement("input", {
     type: "password",
-    autoComplete: "current-password",
+    autoComplete: mode === "login" ? "current-password" : "new-password",
     value: password,
     onChange: e => setPassword(e.target.value),
-    placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022",
+    placeholder: "En az 6 karakter",
     className: inputCls
   })), error && /*#__PURE__*/React.createElement("div", {
     className: "text-xs text-red-600 flex items-center gap-1.5"
@@ -22849,26 +22860,15 @@ function Login({
     size: 13
   }), " ", error), /*#__PURE__*/React.createElement("button", {
     type: "submit",
-    className: "mt-1 bg-blue-600 text-white font-medium px-4 py-2.5 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
-  }, "Giri\u015F Yap ", /*#__PURE__*/React.createElement(ArrowRight, {
+    disabled: busy,
+    className: "mt-1 bg-blue-600 text-white font-medium px-4 py-2.5 rounded-lg hover:bg-blue-700 disabled:opacity-60 flex items-center justify-center gap-2"
+  }, busy ? "..." : mode === "login" ? "Giri\u015F Yap" : "Hesap Olu\u015Ftur", " ", /*#__PURE__*/React.createElement(ArrowRight, {
     size: 16
   }))), /*#__PURE__*/React.createElement("button", {
     type: "button",
-    onClick: () => setShowDemo(v => !v),
-    className: "text-[11px] text-blue-500 hover:text-blue-700 mt-4"
-  }, showDemo ? "Demo hesapları gizle" : "Demo hesapları göster"), showDemo && /*#__PURE__*/React.createElement("div", {
-    className: "mt-2 grid gap-1.5"
-  }, users.map(u => /*#__PURE__*/React.createElement("div", {
-    key: u.id,
-    className: "text-[11px] text-slate-400 bg-slate-50 rounded-lg px-2.5 py-1.5 flex items-center justify-between"
-  }, /*#__PURE__*/React.createElement("span", null, ROLES[u.role].label), /*#__PURE__*/React.createElement("span", {
-    className: "font-mono text-slate-500"
-  }, u.email, " / ", u.password)))), /*#__PURE__*/React.createElement("p", {
-    className: "text-[11px] text-slate-400 mt-4 flex items-start gap-1.5"
-  }, /*#__PURE__*/React.createElement(ShieldCheck, {
-    size: 13,
-    className: "mt-0.5 shrink-0"
-  }), " Demo hesap sistemi (mock auth). Canl\u0131 s\xFCr\xFCmde giri\u015F \u015Firket \u0130K/SSO ile yap\u0131lacak; rol sunucu taraf\u0131nda do\u011Frulanacakt\u0131r."))));
+    onClick: () => setMode(mode === "login" ? "signup" : "login"),
+    className: "text-[12px] text-blue-500 hover:text-blue-700 mt-4"
+  }, mode === "login" ? "Hesabın yok mu? Hesap oluştur" : "Zaten hesabın var mı? Giriş yap"))));
 }
 
 /* ============================ Welcome (ilk giriş) ============================ */
@@ -24136,55 +24136,20 @@ function MentorDashboard({
 /* ============================ Mentor: Users ============================ */
 function UsersAdmin({
   users,
-  addUser,
   setUserRole,
   removeUser
 }) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("stajyer");
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SectionTitle, {
-    sub: "Kullan\u0131c\u0131 olu\u015Ftur ve rol ata. Rol atan\u0131nca departman template'i otomatik gelir."
-  }, "Users"), /*#__PURE__*/React.createElement(Card, {
-    className: "p-4 mb-5"
-  }, /*#__PURE__*/React.createElement(Label, null, "Yeni kullan\u0131c\u0131"), /*#__PURE__*/React.createElement("div", {
-    className: "flex flex-wrap gap-2 items-end"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex-1 min-w-[160px]"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: "block text-xs text-slate-500 mb-1"
-  }, "Ad soyad"), /*#__PURE__*/React.createElement("input", {
-    value: name,
-    onChange: e => setName(e.target.value),
-    placeholder: "\xD6rn: Can Demir",
-    className: inputCls
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    className: "block text-xs text-slate-500 mb-1"
-  }, "Rol (template)"), /*#__PURE__*/React.createElement("select", {
-    value: role,
-    onChange: e => setRole(e.target.value),
-    className: inputCls
-  }, Object.values(ROLES).map(r => /*#__PURE__*/React.createElement("option", {
-    key: r.id,
-    value: r.id
-  }, r.label)))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      if (name.trim()) {
-        addUser(name.trim(), role);
-        setName("");
-      }
-    },
-    className: "bg-blue-600 text-white text-sm font-medium px-3.5 py-2 rounded-lg flex items-center gap-1.5 hover:bg-blue-700"
-  }, /*#__PURE__*/React.createElement(UserPlus, {
-    size: 16
-  }), " Ekle"))), /*#__PURE__*/React.createElement("div", {
+    sub: "Kullan\u0131c\u0131lar giri\u015F ekran\u0131ndaki \"Hesap olu\u015Ftur\" ile kendileri kay\u0131t olur. Burada onlara rol atars\u0131n."
+  }, "Users"), /*#__PURE__*/React.createElement("div", {
     className: "grid gap-2"
   }, users.map(u => {
-    const RI = ROLES[u.role].icon;
+    const RI = u.role ? ROLES[u.role].icon : Clock;
     return /*#__PURE__*/React.createElement(Card, {
       key: u.id,
       className: "p-4 flex items-center gap-4"
     }, /*#__PURE__*/React.createElement("div", {
-      className: `w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold text-white ${u.role === "mentor" ? "bg-blue-600" : "bg-slate-800"}`
+      className: `w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold text-white ${u.role === "mentor" ? "bg-blue-600" : u.role ? "bg-slate-800" : "bg-amber-400"}`
     }, u.name[0]), /*#__PURE__*/React.createElement("div", {
       className: "flex-1"
     }, /*#__PURE__*/React.createElement("div", {
@@ -24193,11 +24158,15 @@ function UsersAdmin({
       className: "text-xs text-slate-400 flex items-center gap-1"
     }, /*#__PURE__*/React.createElement(RI, {
       size: 12
-    }), " ", ROLES[u.role].label)), /*#__PURE__*/React.createElement("select", {
-      value: u.role,
+    }), " ", u.role ? ROLES[u.role].label : "Rol bekleniyor"), u.email && /*#__PURE__*/React.createElement("div", {
+      className: "text-[11px] text-slate-300"
+    }, u.email)), /*#__PURE__*/React.createElement("select", {
+      value: u.role || "",
       onChange: e => setUserRole(u.id, e.target.value),
       className: "text-sm px-2 py-1.5 rounded-lg border border-slate-200"
-    }, Object.values(ROLES).map(r => /*#__PURE__*/React.createElement("option", {
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "Rol se\xE7..."), Object.values(ROLES).map(r => /*#__PURE__*/React.createElement("option", {
       key: r.id,
       value: r.id
     }, r.label))), /*#__PURE__*/React.createElement("button", {
@@ -24418,17 +24387,17 @@ function BackupPanel({
     e.target.value = "";
   };
   return /*#__PURE__*/React.createElement(Card, {
-    className: "p-4 mb-6 flex items-center gap-3 flex-wrap border-amber-200 bg-amber-50/40"
+    className: "p-4 mb-6 flex items-center gap-3 flex-wrap border-blue-200 bg-blue-50/40"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex-1 min-w-[240px]"
   }, /*#__PURE__*/React.createElement("div", {
     className: "text-sm font-medium text-slate-900 flex items-center gap-1.5"
-  }, /*#__PURE__*/React.createElement(AlertTriangle, {
+  }, /*#__PURE__*/React.createElement(ShieldCheck, {
     size: 14,
-    className: "text-amber-500"
+    className: "text-blue-500"
   }), " Yedekle / Geri Y\xFCkle"), /*#__PURE__*/React.createElement("div", {
     className: "text-xs text-slate-500 mt-0.5"
-  }, "Bu ortamda i\xE7erik/ilerleme verisi taray\u0131c\u0131ya ba\u011Fl\u0131d\u0131r ve sistem g\xFCncellendi\u011Finde s\u0131f\u0131rlanabilir. De\u011Fi\u015Fiklik yapt\u0131k\xE7a yedek indir; her oturuma girdi\u011Finde en g\xFCncel yede\u011Fi geri y\xFCkle.")), /*#__PURE__*/React.createElement("button", {
+  }, "Veriler artik ortak Firebase veritabaninda saklaniyor; baglantili herkes ayni icerigi gorur. Bu panel sadece ekstra guvenlik icin manuel bir disa/ice aktarma saglar.")), /*#__PURE__*/React.createElement("button", {
     disabled: busy,
     onClick: doExport,
     className: "text-sm font-medium bg-slate-900 text-white px-3.5 py-2 rounded-lg hover:bg-slate-800 flex items-center gap-1.5 shrink-0"
