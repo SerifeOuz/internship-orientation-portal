@@ -21969,27 +21969,45 @@ function App() {
         email: authUser.email || "",
         role: isFirst ? "mentor" : null
       };
-      const next = [...users, profile];
-      setUsers(next);
-      DOCS.users().set({
-        value: next
-      }).catch(() => {});
+      updateUsers(u => u.some(x => x.uid === authUser.uid) ? u : [...u, profile]);
     }
   }, [authUser, dataReady, users]);
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [chat, justCompleted]);
-  const writeContent = next => {
-    setContent(next);
-    DOCS.content().set({
-      value: next
-    }).catch(() => notify("⚠️ Kaydedilemedi."));
+  // content.stages/access her zaman Firestore'daki EN GÜNCEL haline göre değiştirilir
+  // (yerel state'e değil) — böylece iki farklı sekme/cihaz aynı anda açıkken biri
+  // diğerinin az önce kaydettiği değişikliği eski veriyle üzerine yazamaz.
+  const updateContent = mutator => {
+    window.fbDb.runTransaction(async t => {
+      const ref = DOCS.content();
+      const snap = await t.get(ref);
+      const current = snap.exists ? snap.data().value : {
+        stages: DEFAULT_STAGES,
+        access: DEFAULT_ACCESS
+      };
+      t.set(ref, {
+        value: mutator(current)
+      });
+    }).catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
   };
   const writeUsers = next => {
     setUsers(next);
     DOCS.users().set({
       value: next
     }).catch(() => notify("⚠️ Kaydedilemedi."));
+  };
+  // Kullanıcı listesi de aynı sebeple (aynı anda açık birden fazla sekme/cihaz) her zaman
+  // Firestore'daki EN GÜNCEL haline göre değiştirilir, yerel state'e göre değil.
+  const updateUsers = mutator => {
+    window.fbDb.runTransaction(async t => {
+      const ref = DOCS.users();
+      const snap = await t.get(ref);
+      const current = snap.exists ? snap.data().value : [];
+      t.set(ref, {
+        value: mutator(current)
+      });
+    }).catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
   };
   const writeProgressFull = next => {
     setProgress(next);
@@ -22156,13 +22174,13 @@ function App() {
     started: true
   }));
   const addContentToStage = (stageId, activity) => {
-    writeContent({
-      ...content,
-      stages: content.stages.map(s => s.id === stageId ? {
+    updateContent(c => ({
+      ...c,
+      stages: c.stages.map(s => s.id === stageId ? {
         ...s,
         activities: [...s.activities, activity]
       } : s)
-    });
+    }));
     setAddContent(null);
     notify("İçerik eklendi.");
   };
@@ -22276,66 +22294,68 @@ function App() {
       notify("⚠️ Geçersiz yedek dosyası.");
       return;
     }
-    if (data.content && data.content.stages) writeContent(data.content);
+    if (data.content && data.content.stages) updateContent(() => data.content);
     if (data.users) writeUsers(data.users);
     if (data.progress) writeProgressFull(data.progress);
     notify("Yedek geri yüklendi.");
   };
   const saveStage = d => {
-    writeContent({
-      ...content,
-      stages: content.stages.some(s => s.id === d.id) ? content.stages.map(s => s.id === d.id ? d : s) : [...content.stages, d]
-    });
+    updateContent(c => ({
+      ...c,
+      stages: c.stages.some(s => s.id === d.id) ? c.stages.map(s => s.id === d.id ? d : s) : [...c.stages, d]
+    }));
     setEditingStage(null);
     notify("Aşama kaydedildi.");
   };
   const deleteStage = id => {
-    writeContent({
-      ...content,
-      stages: content.stages.filter(s => s.id !== id)
-    });
+    updateContent(c => ({
+      ...c,
+      stages: c.stages.filter(s => s.id !== id)
+    }));
     notify("Aşama silindi.");
   };
   const moveStage = (id, dir) => {
-    const arr = [...content.stages].sort((a, b) => a.order - b.order);
-    const i = arr.findIndex(s => s.id === id);
-    const j = i + dir;
-    if (j < 0 || j >= arr.length) return;
-    const t = arr[i].order;
-    arr[i] = {
-      ...arr[i],
-      order: arr[j].order
-    };
-    arr[j] = {
-      ...arr[j],
-      order: t
-    };
-    writeContent({
-      ...content,
-      stages: arr
+    updateContent(c => {
+      const arr = [...c.stages].sort((a, b) => a.order - b.order);
+      const i = arr.findIndex(s => s.id === id);
+      const j = i + dir;
+      if (j < 0 || j >= arr.length) return c;
+      const t = arr[i].order;
+      arr[i] = {
+        ...arr[i],
+        order: arr[j].order
+      };
+      arr[j] = {
+        ...arr[j],
+        order: t
+      };
+      return {
+        ...c,
+        stages: arr
+      };
     });
   };
   const saveAccess = d => {
-    writeContent({
-      ...content,
-      access: content.access.some(a => a.id === d.id) ? content.access.map(a => a.id === d.id ? d : a) : [...content.access, d]
-    });
+    updateContent(c => ({
+      ...c,
+      access: c.access.some(a => a.id === d.id) ? c.access.map(a => a.id === d.id ? d : a) : [...c.access, d]
+    }));
     setEditingAccess(null);
     notify("Access kaydedildi.");
   };
   const deleteAccess = id => {
-    writeContent({
-      ...content,
-      access: content.access.filter(a => a.id !== id)
-    });
+    updateContent(c => ({
+      ...c,
+      access: c.access.filter(a => a.id !== id)
+    }));
     notify("Access silindi.");
   };
-  const setUserRole = (id, role) => writeUsers(users.map(x => x.id === id ? {
+  const setUserRole = (id, role) => updateUsers(u => u.map(x => x.id === id ? {
     ...x,
     role
   } : x));
   const removeUser = id => {
-    writeUsers(users.filter(x => x.id !== id));
+    updateUsers(u => u.filter(x => x.id !== id));
     notify("Kullanıcı listeden kaldırıldı. (Not: Firebase giriş hesabı bu işlemle silinmez.)");
   };
 
@@ -24580,7 +24600,7 @@ function ContentAdmin({
       key: a.id,
       className: "p-3.5 flex items-center gap-3"
     }, /*#__PURE__*/React.createElement("div", {
-      className: "w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center"
+      className: "w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center shrink-0"
     }, /*#__PURE__*/React.createElement(Icon, {
       size: 15
     })), /*#__PURE__*/React.createElement("div", {
@@ -24590,15 +24610,15 @@ function ContentAdmin({
     }, a.name, " ", a.kind === "license" && /*#__PURE__*/React.createElement("span", {
       className: `text-[10px] ml-1 px-1.5 py-0.5 rounded ${a.licenseStatus === "granted" ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`
     }, a.licenseStatus === "granted" ? "Production" : "License Pending")), /*#__PURE__*/React.createElement("div", {
-      className: "text-xs text-slate-400 break-words"
+      className: "text-xs text-slate-400 break-all"
     }, a.url)), /*#__PURE__*/React.createElement("button", {
       onClick: () => setEditingAccess(JSON.parse(JSON.stringify(a))),
-      className: "text-slate-400 hover:text-red-600 p-1.5"
+      className: "text-slate-400 hover:text-red-600 p-1.5 shrink-0"
     }, /*#__PURE__*/React.createElement(Pencil, {
       size: 15
     })), /*#__PURE__*/React.createElement("button", {
       onClick: () => deleteAccess(a.id),
-      className: "text-slate-400 hover:text-red-600 p-1.5"
+      className: "text-slate-400 hover:text-red-600 p-1.5 shrink-0"
     }, /*#__PURE__*/React.createElement(Trash2, {
       size: 15
     })));
