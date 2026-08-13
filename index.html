@@ -21942,7 +21942,11 @@ function App() {
       });
       gotAccess = true;
       check();
-    }, () => notify("⚠️ Erişim listesi yüklenemedi."));
+    }, () => {
+      notify("⚠️ Erişim listesi yüklenemedi.");
+      gotAccess = true;
+      check();
+    });
     const unsubS = DOCS.stagesCol().onSnapshot(async snap => {
       if (snap.empty) {
         // İlk çalıştırma: eski tek-doküman yapısında (appdata/content.stages) veri
@@ -21962,21 +21966,33 @@ function App() {
       }
       gotStages = true;
       check();
-    }, () => notify("⚠️ Aşamalar yüklenemedi."));
+    }, () => {
+      notify("⚠️ Aşamalar yüklenemedi.");
+      gotStages = true;
+      check();
+    });
     const unsubU = DOCS.users().onSnapshot(async snap => {
       if (snap.exists) setUsers(snap.data().value);else await DOCS.users().set({
         value: []
       });
       gotUsers = true;
       check();
-    }, () => notify("⚠️ Kullanıcılar yüklenemedi."));
+    }, () => {
+      notify("⚠️ Kullanıcılar yüklenemedi.");
+      gotUsers = true;
+      check();
+    });
     const unsubP = DOCS.progress().onSnapshot(async snap => {
       if (snap.exists) setProgress(snap.data().value);else await DOCS.progress().set({
         value: {}
       });
       gotProgress = true;
       check();
-    }, () => notify("⚠️ İlerleme yüklenemedi."));
+    }, () => {
+      notify("⚠️ İlerleme yüklenemedi.");
+      gotProgress = true;
+      check();
+    });
     return () => {
       unsubC();
       unsubS();
