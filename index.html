@@ -22011,22 +22011,21 @@ function App() {
   // Access listesi küçük olduğu için hâlâ tek dokümanda (appdata/content); her zaman
   // Firestore'daki en güncel haline göre değiştirilir (aynı anda açık başka bir
   // sekme/cihaz varsa birbirinin üzerine yazmasın diye).
-  const updateAccess = mutator => {
-    window.fbDb.runTransaction(async t => {
-      const ref = DOCS.content();
-      const snap = await t.get(ref);
-      const current = snap.exists && snap.data().value && snap.data().value.access ? snap.data().value.access : DEFAULT_ACCESS;
-      t.set(ref, {
-        value: {
-          access: mutator(current)
-        }
-      });
-    }).catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
-  };
+  const updateAccess = mutator => window.fbDb.runTransaction(async t => {
+    const ref = DOCS.content();
+    const snap = await t.get(ref);
+    const current = snap.exists && snap.data().value && snap.data().value.access ? snap.data().value.access : DEFAULT_ACCESS;
+    t.set(ref, {
+      value: {
+        access: mutator(current)
+      }
+    });
+  });
   // Her aşama artık kendi dokümanında (appdata_stages/{stageId}) — kaydetmek/silmek
   // sadece o tek aşamayı etkiler, diğer aşamaları veya boyut sınırını etkilemez.
-  const saveStageDoc = s => DOCS.stagesCol().doc(s.id).set(s).catch(() => notify("⚠️ Kaydedilemedi — belge(ler) çok büyük olabilir."));
-  const deleteStageDoc = id => DOCS.stagesCol().doc(id).delete().catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
+  const saveStageDoc = s => DOCS.stagesCol().doc(s.id).set(s);
+  const deleteStageDoc = id => DOCS.stagesCol().doc(id).delete();
+  const showSaveError = e => notify(e && e.code === "permission-denied" ? "⚠️ Kaydedilemedi — izin sorunu (Firestore Rules kontrol et)." : "⚠️ Kaydedilemedi — belge(ler) çok büyük olabilir.");
   const writeUsers = next => {
     setUsers(next);
     DOCS.users().set({
@@ -22213,15 +22212,16 @@ function App() {
     window.fbDb.runTransaction(async t => {
       const ref = DOCS.stagesCol().doc(stageId);
       const snap = await t.get(ref);
-      if (!snap.exists) return;
+      if (!snap.exists) throw new Error("stage-not-found");
       const s = snap.data();
       t.set(ref, {
         ...s,
         activities: [...s.activities, activity]
       });
-    }).catch(() => notify("⚠️ Kaydedilemedi — belge(ler) çok büyük olabilir."));
-    setAddContent(null);
-    notify("İçerik eklendi.");
+    }).then(() => {
+      setAddContent(null);
+      notify("İçerik eklendi.");
+    }).catch(e => notify(e && e.code === "permission-denied" ? "⚠️ Kaydedilemedi — izin sorunu (Firestore Rules kontrol et)." : "⚠️ Kaydedilemedi — belge(ler) çok büyük olabilir."));
   };
   // Mentor erişimi kendisi onaylamaz: talebi inceler, gereken yetkileri netleştirip BT'ye iletir.
   // BT'nin gerçek onay/red kararı bu demoda simüle edilir (resolveITRequest).
@@ -22344,13 +22344,13 @@ function App() {
     notify("Yedek geri yüklendi.");
   };
   const saveStage = d => {
-    saveStageDoc(d);
-    setEditingStage(null);
-    notify("Aşama kaydedildi.");
+    saveStageDoc(d).then(() => {
+      setEditingStage(null);
+      notify("Aşama kaydedildi.");
+    }).catch(showSaveError);
   };
   const deleteStage = id => {
-    deleteStageDoc(id);
-    notify("Aşama silindi.");
+    deleteStageDoc(id).then(() => notify("Aşama silindi.")).catch(showSaveError);
   };
   const moveStage = (id, dir) => {
     const arr = [...content.stages].sort((a, b) => a.order - b.order);
@@ -22361,7 +22361,7 @@ function App() {
       const refA = DOCS.stagesCol().doc(arr[i].id);
       const refB = DOCS.stagesCol().doc(arr[j].id);
       const [snapA, snapB] = await Promise.all([t.get(refA), t.get(refB)]);
-      if (!snapA.exists || !snapB.exists) return;
+      if (!snapA.exists || !snapB.exists) throw new Error("stage-not-found");
       const a = snapA.data(),
         b = snapB.data();
       t.set(refA, {
@@ -22372,16 +22372,16 @@ function App() {
         ...b,
         order: a.order
       });
-    }).catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
+    }).catch(showSaveError);
   };
   const saveAccess = d => {
-    updateAccess(access => access.some(a => a.id === d.id) ? access.map(a => a.id === d.id ? d : a) : [...access, d]);
-    setEditingAccess(null);
-    notify("Access kaydedildi.");
+    updateAccess(access => access.some(a => a.id === d.id) ? access.map(a => a.id === d.id ? d : a) : [...access, d]).then(() => {
+      setEditingAccess(null);
+      notify("Access kaydedildi.");
+    }).catch(showSaveError);
   };
   const deleteAccess = id => {
-    updateAccess(access => access.filter(a => a.id !== id));
-    notify("Access silindi.");
+    updateAccess(access => access.filter(a => a.id !== id)).then(() => notify("Access silindi.")).catch(showSaveError);
   };
   const setUserRole = (id, role) => updateUsers(u => u.map(x => x.id === id ? {
     ...x,
@@ -22858,12 +22858,13 @@ function FileAttach({
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const MAX = 700 * 1024; // ~700KB — paylaşımlı veritabanı dokümanının (1MB) altında güvenle kalmak için
+  const MAX = 250 * 1024; // ~250KB — bir aşamada birden fazla belge olabileceği için (o aşamanın
+  // tüm dosyaları toplamda ~1MB'lık doküman sınırının altında kalmalı) her dosya küçük tutulmalı.
   const pick = e => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX) {
-      setErr("Bu dosya çok büyük (" + (file.size / 1024 / 1024).toFixed(1) + " MB). En fazla ~0.7 MB'lık dosyalar güvenle desteklenir.");
+      setErr("Bu dosya çok büyük (" + (file.size / 1024 / 1024).toFixed(1) + " MB). En fazla ~0.25 MB'lık dosyalar güvenle desteklenir (bir aşamada birden fazla belge olabileceği için).");
       e.target.value = "";
       return;
     }
