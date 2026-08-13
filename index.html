@@ -21906,6 +21906,7 @@ function App() {
   const [review, setReview] = useState(null);
   const [addContent, setAddContent] = useState(null);
   const [toast, setToast] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const scrollRef = useRef(null);
   const notify = m => {
     setToast(m);
@@ -21923,12 +21924,19 @@ function App() {
       setDataReady(false);
       return;
     }
+    setLoadError(null);
     let gotAccess = false,
       gotStages = false,
       gotUsers = false,
       gotProgress = false;
     const check = () => {
       if (gotAccess && gotStages && gotUsers && gotProgress) setDataReady(true);
+    };
+    // ÖNEMLİ: bir yükleme hatası olursa asla varsayılan/boş içerikle devam etmiyoruz —
+    // bu, gerçek veri hâlâ Firestore'da dururken "her şey silinmiş" gibi yanıltıcı bir
+    // görüntüye yol açardı. Bunun yerine açık bir hata ekranı gösterip yüklemeyi durduruyoruz.
+    const fail = (which, e) => {
+      setLoadError(which + (e && e.code ? " (" + e.code + ")" : ""));
     };
     const unsubC = DOCS.content().onSnapshot(async snap => {
       const acc = snap.exists && snap.data().value && snap.data().value.access;
@@ -21942,11 +21950,7 @@ function App() {
       });
       gotAccess = true;
       check();
-    }, () => {
-      notify("⚠️ Erişim listesi yüklenemedi.");
-      gotAccess = true;
-      check();
-    });
+    }, e => fail("Erişim listesi yüklenemedi.", e));
     const unsubS = DOCS.stagesCol().onSnapshot(async snap => {
       if (snap.empty) {
         // İlk çalıştırma: eski tek-doküman yapısında (appdata/content.stages) veri
@@ -21957,7 +21961,7 @@ function App() {
         const seed = oldStages && oldStages.length ? oldStages : DEFAULT_STAGES;
         const batch = window.fbDb.batch();
         seed.forEach(s => batch.set(DOCS.stagesCol().doc(s.id), s));
-        await batch.commit().catch(() => notify("⚠️ Aşamalar taşınamadı."));
+        await batch.commit().catch(e => fail("Aşamalar taşınamadı.", e));
       } else {
         setContent(c => ({
           ...c,
@@ -21966,33 +21970,21 @@ function App() {
       }
       gotStages = true;
       check();
-    }, () => {
-      notify("⚠️ Aşamalar yüklenemedi.");
-      gotStages = true;
-      check();
-    });
+    }, e => fail("Aşamalar yüklenemedi.", e));
     const unsubU = DOCS.users().onSnapshot(async snap => {
       if (snap.exists) setUsers(snap.data().value);else await DOCS.users().set({
         value: []
       });
       gotUsers = true;
       check();
-    }, () => {
-      notify("⚠️ Kullanıcılar yüklenemedi.");
-      gotUsers = true;
-      check();
-    });
+    }, e => fail("Kullanıcılar yüklenemedi.", e));
     const unsubP = DOCS.progress().onSnapshot(async snap => {
       if (snap.exists) setProgress(snap.data().value);else await DOCS.progress().set({
         value: {}
       });
       gotProgress = true;
       check();
-    }, () => {
-      notify("⚠️ İlerleme yüklenemedi.");
-      gotProgress = true;
-      check();
-    });
+    }, e => fail("İlerleme yüklenemedi.", e));
     return () => {
       unsubC();
       unsubS();
@@ -22501,6 +22493,24 @@ function App() {
     error: authError,
     busy: authBusy
   });
+  if (loadError) return /*#__PURE__*/React.createElement("div", {
+    className: "min-h-screen flex items-center justify-center bg-slate-50 p-6"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "max-w-sm text-center"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4"
+  }, /*#__PURE__*/React.createElement(AlertTriangle, {
+    size: 22
+  })), /*#__PURE__*/React.createElement("h1", {
+    className: "text-lg font-semibold text-slate-900"
+  }, "Veriler y\xFCklenemedi"), /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-slate-500 mt-2"
+  }, loadError), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-400 mt-2"
+  }, "Verilerin kendisi kaybolmad\u0131 \u2014 sadece y\xFCklenemedi. Bu genelde Firestore Rules ayar\u0131yla ilgilidir."), /*#__PURE__*/React.createElement("button", {
+    onClick: () => window.location.reload(),
+    className: "mt-5 text-sm font-medium bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
+  }, "Tekrar Dene")));
   if (!dataReady) return /*#__PURE__*/React.createElement("div", {
     className: "min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm"
   }, "Veriler y\xFCkleniyor\u2026");
