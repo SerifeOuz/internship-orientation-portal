@@ -22490,7 +22490,7 @@ function App() {
   const rp = !isMentor ? roleProgress(currentUser.role, myProg) : null;
   const pendingRequests = []; // mentorun BT'ye iletmesi gereken (henüz iletilmemiş) talepler
   const forwardedRequests = []; // BT'ye iletilmiş, yanıt bekleyen talepler
-  users.filter(u => u.role !== "mentor").forEach(u => {
+  users.filter(u => u.role && u.role !== "mentor").forEach(u => {
     const p = progress[u.id] || emptyProgress();
     Object.entries(p.access).forEach(([aid, rec]) => {
       const a = content.access.find(x => x.id === aid);
@@ -24037,7 +24037,7 @@ function MentorDashboard({
   forwardedRequests,
   setView
 }) {
-  const onboarders = users.filter(u => u.role !== "mentor");
+  const onboarders = users.filter(u => u.role && u.role !== "mentor");
   const sel = onboarders.find(u => u.id === mentorSel) || null;
   const userAlert = p => Object.values(p.activities || {}).some(acts => Object.values(acts).some(ap => ap.attempts >= 2 && !ap.passed)) || Object.values(p.access || {}).some(s => s?.status === "pending" || s?.status === "forwarded");
   if (sel) {
