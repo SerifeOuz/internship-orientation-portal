@@ -21854,6 +21854,11 @@ const ACCESS_ICONS = {
 // Firestore veritabanına yazılır. Bu linki açan ve giriş yapan herkes aynı veriyi görür.
 const DOCS = {
   content: () => window.fbDb.collection("appdata").doc("content"),
+  // Her aşama kendi dokümanında tutulur (appdata_stages/{stageId}) — Firestore'un
+  // doküman başına ~1MB sınırı yüzünden tüm aşamaları tek dokümanda tutmak, çok
+  // belge eklenince kayıt hatasına yol açıyordu. Access listesi küçük olduğu için
+  // hâlâ tek "content" dokümanında tutuluyor.
+  stagesCol: () => window.fbDb.collection("appdata_stages"),
   users: () => window.fbDb.collection("appdata").doc("users"),
   progress: () => window.fbDb.collection("appdata").doc("progress")
 };
@@ -21918,22 +21923,46 @@ function App() {
       setDataReady(false);
       return;
     }
-    let gotContent = false,
+    let gotAccess = false,
+      gotStages = false,
       gotUsers = false,
       gotProgress = false;
     const check = () => {
-      if (gotContent && gotUsers && gotProgress) setDataReady(true);
+      if (gotAccess && gotStages && gotUsers && gotProgress) setDataReady(true);
     };
     const unsubC = DOCS.content().onSnapshot(async snap => {
-      if (snap.exists) setContent(snap.data().value);else await DOCS.content().set({
+      const acc = snap.exists && snap.data().value && snap.data().value.access;
+      if (acc) setContent(c => ({
+        ...c,
+        access: acc
+      }));else await DOCS.content().set({
         value: {
-          stages: DEFAULT_STAGES,
           access: DEFAULT_ACCESS
         }
       });
-      gotContent = true;
+      gotAccess = true;
       check();
-    }, () => notify("⚠️ İçerik yüklenemedi."));
+    }, () => notify("⚠️ Erişim listesi yüklenemedi."));
+    const unsubS = DOCS.stagesCol().onSnapshot(async snap => {
+      if (snap.empty) {
+        // İlk çalıştırma: eski tek-doküman yapısında (appdata/content.stages) veri
+        // varsa onu koru, yoksa varsayılan aşamalarla başlat. Her aşama artık kendi
+        // dokümanında (bkz. DOCS.stagesCol) — böylece büyük belgeler diğer aşamaları etkilemez.
+        const old = await DOCS.content().get();
+        const oldStages = old.exists && old.data().value && old.data().value.stages;
+        const seed = oldStages && oldStages.length ? oldStages : DEFAULT_STAGES;
+        const batch = window.fbDb.batch();
+        seed.forEach(s => batch.set(DOCS.stagesCol().doc(s.id), s));
+        await batch.commit().catch(() => notify("⚠️ Aşamalar taşınamadı."));
+      } else {
+        setContent(c => ({
+          ...c,
+          stages: snap.docs.map(d => d.data())
+        }));
+      }
+      gotStages = true;
+      check();
+    }, () => notify("⚠️ Aşamalar yüklenemedi."));
     const unsubU = DOCS.users().onSnapshot(async snap => {
       if (snap.exists) setUsers(snap.data().value);else await DOCS.users().set({
         value: []
@@ -21950,6 +21979,7 @@ function App() {
     }, () => notify("⚠️ İlerleme yüklenemedi."));
     return () => {
       unsubC();
+      unsubS();
       unsubU();
       unsubP();
     };
@@ -21978,19 +22008,25 @@ function App() {
   // content.stages/access her zaman Firestore'daki EN GÜNCEL haline göre değiştirilir
   // (yerel state'e değil) — böylece iki farklı sekme/cihaz aynı anda açıkken biri
   // diğerinin az önce kaydettiği değişikliği eski veriyle üzerine yazamaz.
-  const updateContent = mutator => {
+  // Access listesi küçük olduğu için hâlâ tek dokümanda (appdata/content); her zaman
+  // Firestore'daki en güncel haline göre değiştirilir (aynı anda açık başka bir
+  // sekme/cihaz varsa birbirinin üzerine yazmasın diye).
+  const updateAccess = mutator => {
     window.fbDb.runTransaction(async t => {
       const ref = DOCS.content();
       const snap = await t.get(ref);
-      const current = snap.exists ? snap.data().value : {
-        stages: DEFAULT_STAGES,
-        access: DEFAULT_ACCESS
-      };
+      const current = snap.exists && snap.data().value && snap.data().value.access ? snap.data().value.access : DEFAULT_ACCESS;
       t.set(ref, {
-        value: mutator(current)
+        value: {
+          access: mutator(current)
+        }
       });
     }).catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
   };
+  // Her aşama artık kendi dokümanında (appdata_stages/{stageId}) — kaydetmek/silmek
+  // sadece o tek aşamayı etkiler, diğer aşamaları veya boyut sınırını etkilemez.
+  const saveStageDoc = s => DOCS.stagesCol().doc(s.id).set(s).catch(() => notify("⚠️ Kaydedilemedi — belge(ler) çok büyük olabilir."));
+  const deleteStageDoc = id => DOCS.stagesCol().doc(id).delete().catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
   const writeUsers = next => {
     setUsers(next);
     DOCS.users().set({
@@ -22174,13 +22210,16 @@ function App() {
     started: true
   }));
   const addContentToStage = (stageId, activity) => {
-    updateContent(c => ({
-      ...c,
-      stages: c.stages.map(s => s.id === stageId ? {
+    window.fbDb.runTransaction(async t => {
+      const ref = DOCS.stagesCol().doc(stageId);
+      const snap = await t.get(ref);
+      if (!snap.exists) return;
+      const s = snap.data();
+      t.set(ref, {
         ...s,
         activities: [...s.activities, activity]
-      } : s)
-    }));
+      });
+    }).catch(() => notify("⚠️ Kaydedilemedi — belge(ler) çok büyük olabilir."));
     setAddContent(null);
     notify("İçerik eklendi.");
   };
@@ -22294,60 +22333,54 @@ function App() {
       notify("⚠️ Geçersiz yedek dosyası.");
       return;
     }
-    if (data.content && data.content.stages) updateContent(() => data.content);
+    if (data.content && data.content.stages) {
+      const batch = window.fbDb.batch();
+      data.content.stages.forEach(s => batch.set(DOCS.stagesCol().doc(s.id), s));
+      batch.commit().catch(() => notify("⚠️ Aşamalar geri yüklenemedi."));
+      updateAccess(() => data.content.access || DEFAULT_ACCESS);
+    }
     if (data.users) writeUsers(data.users);
     if (data.progress) writeProgressFull(data.progress);
     notify("Yedek geri yüklendi.");
   };
   const saveStage = d => {
-    updateContent(c => ({
-      ...c,
-      stages: c.stages.some(s => s.id === d.id) ? c.stages.map(s => s.id === d.id ? d : s) : [...c.stages, d]
-    }));
+    saveStageDoc(d);
     setEditingStage(null);
     notify("Aşama kaydedildi.");
   };
   const deleteStage = id => {
-    updateContent(c => ({
-      ...c,
-      stages: c.stages.filter(s => s.id !== id)
-    }));
+    deleteStageDoc(id);
     notify("Aşama silindi.");
   };
   const moveStage = (id, dir) => {
-    updateContent(c => {
-      const arr = [...c.stages].sort((a, b) => a.order - b.order);
-      const i = arr.findIndex(s => s.id === id);
-      const j = i + dir;
-      if (j < 0 || j >= arr.length) return c;
-      const t = arr[i].order;
-      arr[i] = {
-        ...arr[i],
-        order: arr[j].order
-      };
-      arr[j] = {
-        ...arr[j],
-        order: t
-      };
-      return {
-        ...c,
-        stages: arr
-      };
-    });
+    const arr = [...content.stages].sort((a, b) => a.order - b.order);
+    const i = arr.findIndex(s => s.id === id);
+    const j = i + dir;
+    if (j < 0 || j >= arr.length) return;
+    window.fbDb.runTransaction(async t => {
+      const refA = DOCS.stagesCol().doc(arr[i].id);
+      const refB = DOCS.stagesCol().doc(arr[j].id);
+      const [snapA, snapB] = await Promise.all([t.get(refA), t.get(refB)]);
+      if (!snapA.exists || !snapB.exists) return;
+      const a = snapA.data(),
+        b = snapB.data();
+      t.set(refA, {
+        ...a,
+        order: b.order
+      });
+      t.set(refB, {
+        ...b,
+        order: a.order
+      });
+    }).catch(() => notify("⚠️ Kaydedilemedi — tekrar dene."));
   };
   const saveAccess = d => {
-    updateContent(c => ({
-      ...c,
-      access: c.access.some(a => a.id === d.id) ? c.access.map(a => a.id === d.id ? d : a) : [...c.access, d]
-    }));
+    updateAccess(access => access.some(a => a.id === d.id) ? access.map(a => a.id === d.id ? d : a) : [...access, d]);
     setEditingAccess(null);
     notify("Access kaydedildi.");
   };
   const deleteAccess = id => {
-    updateContent(c => ({
-      ...c,
-      access: c.access.filter(a => a.id !== id)
-    }));
+    updateAccess(access => access.filter(a => a.id !== id));
     notify("Access silindi.");
   };
   const setUserRole = (id, role) => updateUsers(u => u.map(x => x.id === id ? {
